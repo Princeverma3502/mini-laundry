@@ -1,0 +1,145 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Mini Laundry</title>
+    <link rel="stylesheet" href="/styles.css">
+  </head>
+  <body>
+    <header class="app-header">
+      <h1>Mini Laundry</h1>
+      <p class="muted">Simple order management for a dry cleaning store</p>
+    </header>
+
+    <main class="grid">
+      <section class="card form-card">
+        <h2>Create Order</h2>
+        <div class="row">
+          <input id="name" placeholder="Customer name" aria-label="Customer name" />
+          <input id="phone" placeholder="Phone" aria-label="Phone number" />
+        </div>
+
+        <div id="garments" class="garments">
+          <div class="garment-row">
+            <select class="g-type"><option>Shirt</option><option>Pants</option><option>Saree</option></select>
+            <input class="g-qty" type="number" value="1" min="1" />
+            <input class="g-price" placeholder="price (optional)" />
+            <button class="rm">Remove</button>
+          </div>
+        </div>
+
+        <div class="actions">
+          <button id="add-g" class="btn">Add Garment</button>
+          <button id="create" class="btn primary">Create Order</button>
+        </div>
+
+        <div id="create-feedback" class="feedback" aria-live="polite"></div>
+      </section>
+
+      <aside class="card sidebar">
+        <h2>Filters</h2>
+        <label> Status
+          <select id="status-filter" title="Filter by status"><option value="">ALL</option><option>RECEIVED</option><option>PROCESSING</option><option>READY</option><option>DELIVERED</option></select>
+        </label>
+        <label> Search
+          <input id="q" placeholder="search name or phone" />
+        </label>
+        <div class="actions">
+          <button id="refresh" class="btn">Refresh</button>
+        </div>
+
+        <h3>Dashboard</h3>
+        <div id="dashboard" class="dashboard-cards"></div>
+      </aside>
+
+      <section class="card table-card">
+        <h2>Orders</h2>
+        <table id="orders-table"><thead><tr><th>ID</th><th>Customer</th><th>Phone</th><th>Total</th><th>Status</th><th>Actions</th></tr></thead><tbody></tbody></table>
+      </section>
+    </main>
+
+    <script>
+      function el(sel){return document.querySelector(sel)}
+      function els(sel){return Array.from(document.querySelectorAll(sel))}
+
+      function attachRemoveHandlers(){
+        els('.rm').forEach(btn=>{
+          btn.onclick = ()=>{
+            const row = btn.closest('.garment-row') || btn.parentElement;
+            if(row) row.remove();
+          }
+        });
+      }
+
+      document.getElementById('add-g').addEventListener('click', ()=>{
+        const div = document.createElement('div');
+        div.className = 'garment-row';
+        div.innerHTML = '<select class="g-type"><option>Shirt</option><option>Pants</option><option>Saree</option></select> <input class="g-qty" type="number" value="1" min="1" /> <input class="g-price" placeholder="price (optional)" /> <button class="rm">Remove</button>';
+        document.getElementById('garments').appendChild(div);
+        attachRemoveHandlers();
+      });
+
+      // Attach to any existing remove buttons on load
+      attachRemoveHandlers();
+
+      async function createOrder(){
+        const customerName = el('#name').value.trim();
+        const phone = el('#phone').value.trim();
+        if(!customerName || !phone){ el('#create-feedback').innerText = 'Name and phone are required'; return; }
+        const garDivs = els('#garments > .garment-row');
+        const garments = garDivs.map(d=>({ type: d.querySelector('.g-type').value, quantity: Number(d.querySelector('.g-qty').value)||0, price: d.querySelector('.g-price').value ? Number(d.querySelector('.g-price').value) : undefined }));
+        const res = await fetch('/api/orders', {method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({customerName,phone,garments})});
+        if(res.ok){ const data = await res.json(); el('#create-feedback').innerText = `Created order ${data.id} — Total ${data.total}`; resetForm(); loadOrders(); }
+        else { const err = await res.json().catch(()=>({error:'error'})); el('#create-feedback').innerText = err.error || 'Error creating order'; }
+      }
+
+      function resetForm(){
+        el('#name').value = '';
+        el('#phone').value = '';
+        document.getElementById('garments').innerHTML = '<div class="garment-row"><select class="g-type"><option>Shirt</option><option>Pants</option><option>Saree</option></select> <input class="g-qty" type="number" value="1" min="1" /> <input class="g-price" placeholder="price (optional)" /> <button class="rm">Remove</button></div>';
+        attachRemoveHandlers();
+      }
+
+      document.getElementById('create').addEventListener('click', createOrder);
+
+      function renderDashboard(d){
+        const elDash = el('#dashboard'); elDash.innerHTML = '';
+        const total = document.createElement('div'); total.className='dash-card'; total.innerText = `Total orders: ${d.totalOrders}`;
+        const revenue = document.createElement('div'); revenue.className='dash-card'; revenue.innerText = `Total revenue: ${d.totalRevenue}`;
+        elDash.appendChild(total); elDash.appendChild(revenue);
+        const st = document.createElement('div'); st.className='dash-card'; st.innerHTML = Object.entries(d.perStatus).map(([k,v])=>`<div><strong>${k}:</strong> ${v}</div>`).join('');
+        elDash.appendChild(st);
+      }
+
+      async function loadOrders(){
+        const status = el('#status-filter').value;
+        const q = el('#q').value;
+        const params = new URLSearchParams();
+        if(status) params.set('status', status);
+        if(q) params.set('q', q);
+        const res = await fetch('/api/orders?'+params.toString());
+        const items = await res.json();
+        const tbody = el('#orders-table tbody'); tbody.innerHTML='';
+        for(const o of items){
+          const tr = document.createElement('tr');
+          tr.innerHTML = `<td>${o.id}</td><td>${o.customerName}</td><td>${o.phone}</td><td>${o.total}</td><td><span class="status-badge">${o.status}</span></td><td><select data-id="${o.id}" class="st">${['RECEIVED','PROCESSING','READY','DELIVERED'].map(s=>`<option ${s===o.status?'selected':''}>${s}</option>`).join('')}</select></td>`;
+          tbody.appendChild(tr);
+        }
+        els('.st').forEach(s=>s.addEventListener('change', async (ev)=>{
+          const id = ev.target.dataset.id; const status = ev.target.value;
+          await fetch('/api/orders/'+id+'/status',{method:'PATCH',headers:{'content-type':'application/json'},body:JSON.stringify({status})});
+          loadOrders();
+        }));
+
+        // dashboard
+        const dres = await fetch('/api/orders/-dashboard/summary');
+        const d = await dres.json();
+        renderDashboard(d);
+      }
+
+      document.getElementById('refresh').addEventListener('click', loadOrders);
+      loadOrders();
+    </script>
+  </body>
+</html>
